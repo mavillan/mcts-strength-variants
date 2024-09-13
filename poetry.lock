@@ -923,6 +923,26 @@ pandas = ["pandas (>=0.24.0)"]
 scikit-learn = ["scikit-learn (!=0.22.0)"]
 
 [[package]]
+name = "lofo-importance"
+version = "0.3.4"
+description = "Leave One Feature Out Importance"
+optional = false
+python-versions = "*"
+files = [
+    {file = "lofo-importance-0.3.4.tar.gz", hash = "sha256:1803f6c5eff4f32732360496340b1f2c6f1c6d26bad4e8c110faef02d9746555"},
+    {file = "lofo_importance-0.3.4-py3-none-any.whl", hash = "sha256:b001e23c634ee234603ad0fc66111b182734e162d6c6db554d210fb5208bb469"},
+]
+
+[package.dependencies]
+lightgbm = "*"
+networkx = "*"
+numpy = ">=1.17.3"
+pandas = "*"
+scikit-learn = ">=0.20.3"
+scipy = "*"
+tqdm = "*"
+
+[[package]]
 name = "matplotlib"
 version = "3.9.2"
 description = "Python plotting package"
@@ -1009,6 +1029,24 @@ files = [
     {file = "nest_asyncio-1.6.0-py3-none-any.whl", hash = "sha256:87af6efd6b5e897c81050477ef65c62e2b2f35d51703cae01aff2905b1852e1c"},
     {file = "nest_asyncio-1.6.0.tar.gz", hash = "sha256:6f172d5449aca15afd6c646851f4e31e02c598d553a667e38cafa997cfec55fe"},
 ]
+
+[[package]]
+name = "networkx"
+version = "3.3"
+description = "Python package for creating and manipulating graphs and networks"
+optional = false
+python-versions = ">=3.10"
+files = [
+    {file = "networkx-3.3-py3-none-any.whl", hash = "sha256:28575580c6ebdaf4505b22c6256a2b9de86b316dc63ba9e93abde3d78dfdbcf2"},
+    {file = "networkx-3.3.tar.gz", hash = "sha256:0c127d8b2f4865f59ae9cb8aafcd60b5c70f3241ebd66f7defad7c4ab90126c9"},
+]
+
+[package.extras]
+default = ["matplotlib (>=3.6)", "numpy (>=1.23)", "pandas (>=1.4)", "scipy (>=1.9,!=1.11.0,!=1.11.1)"]
+developer = ["changelist (==0.5)", "mypy (>=1.1)", "pre-commit (>=3.2)", "rtoml"]
+doc = ["myst-nb (>=1.0)", "numpydoc (>=1.7)", "pillow (>=9.4)", "pydata-sphinx-theme (>=0.14)", "sphinx (>=7)", "sphinx-gallery (>=0.14)", "texext (>=0.6.7)"]
+extra = ["lxml (>=4.6)", "pydot (>=2.0)", "pygraphviz (>=1.12)", "sympy (>=1.10)"]
+test = ["pytest (>=7.2)", "pytest-cov (>=4.0)"]
 
 [[package]]
 name = "numpy"
@@ -2047,4 +2085,4 @@ scikit-learn = ["scikit-learn"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "43ec3058dcd28585ebe9f72f691025f97ec375da81561802259aaebb9befeae0"
+content-hash = "a98cf68efc5dc4b1b49879a93408db22f7c52296d1d52e813c8b6437c1ec7d62"
