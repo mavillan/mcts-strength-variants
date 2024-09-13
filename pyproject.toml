@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "mcts-strength-variants"
+version = "0.1.0"
+description = ""
+authors = ["mavillan <nallivam@gmail.com>"]
+readme = "README.md"
+packages = [{include = "mcts_strength_variants"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+kaggle = "^1.6.17"
+pandas = "^2.2.2"
+polars = "^1.7.1"
+lightgbm = "^4.5.0"
+xgboost = "^2.1.1"
+catboost = "^1.2.7"
+ipykernel = "^6.29.5"
+category-encoders = "^2.6.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
