@@ -43,8 +43,10 @@ def preprocess_data(
     # Apply ordinal encoding to categorical columns
     encoder = OrdinalEncoder()
     df_train[categorical_cols] = encoder.fit_transform(df_train[categorical_cols])
+    df_train[categorical_cols] = df_train[categorical_cols].astype(int)
     if df_test is not None:
         df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
+        df_test[categorical_cols] = df_test[categorical_cols].astype(int)
 
     # Scale the target variable 'utility_agent1' to be between 0 and 1 if scale_utility is True
     if scale_utility:
