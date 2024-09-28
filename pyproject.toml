@@ -24,6 +24,7 @@ python-dotenv = "^1.0.1"
 tiktoken = "^0.7.0"
 pyarrow = "^17.0.0"
 fastparquet = "^2024.5.0"
+lightning = "^2.4.0"
 
 
 [build-system]
