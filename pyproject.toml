@@ -28,6 +28,7 @@ lightning = "^2.4.0"
 papermill = "^2.6.0"
 typer = "^0.12.5"
 seaborn = "^0.13.2"
+optuna = "^4.0.0"
 
 
 [build-system]
