@@ -1,5 +1,6 @@
+import numpy as np
 import pandas as pd
-from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
 
 def split_agent_fields(df):
@@ -12,7 +13,6 @@ def split_agent_fields(df):
 
 def process_train_data(
     df_train: pd.DataFrame,
-    scale_utility: bool = True
 ):
     df_train = split_agent_fields(df_train)
 
@@ -43,26 +43,32 @@ def process_train_data(
     df_train[categorical_cols] = encoder.fit_transform(df_train[categorical_cols])
     df_train[categorical_cols] = df_train[categorical_cols].astype(int)
 
-    # Scale the target variable 'utility_agent1' to be between 0 and 1 if scale_utility is True
-    if scale_utility:
-        min_utility = -1.0
-        max_utility = 1.0
-        df_train['utility_agent1_scaled'] = df_train.eval(
-            "(utility_agent1 - @min_utility) / (@max_utility - @min_utility)"
-        )
+    # Fit and transform the numerical columns of df_train
+    scaler = StandardScaler()
+    df_train[numerical_cols] = scaler.fit_transform(df_train[numerical_cols])
 
-    return df_train, numerical_cols, categorical_cols, encoder
+    df_train[numerical_cols] = df_train[numerical_cols].astype(np.float32)
+    df_train[categorical_cols] = df_train[categorical_cols].astype(np.int32)
+
+    return df_train, numerical_cols, categorical_cols, encoder, scaler
 
 
 def process_test_data(
     df_test: pd.DataFrame,
+    numerical_cols: list,
     categorical_cols: list,
-    encoder: OrdinalEncoder
+    encoder: OrdinalEncoder,
+    scaler: StandardScaler
 ):
     df_test = split_agent_fields(df_test)
 
     # Apply ordinal encoding to categorical columns
     df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
-    df_test[categorical_cols] = df_test[categorical_cols].astype(int)
+
+    # Fit and transform the numerical columns of df_test
+    df_test[numerical_cols] = scaler.transform(df_test[numerical_cols])
+
+    df_test[numerical_cols] = df_test[numerical_cols].astype(np.float32)
+    df_test[categorical_cols] = df_test[categorical_cols].astype(np.int32)
 
     return df_test
