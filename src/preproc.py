@@ -1,22 +1,20 @@
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder
 
-def preprocess_data(
+
+def split_agent_fields(df):
+    agent1_cols = ['agent1_selection', 'agent1_exploration_const', 'agent1_playout', 'agent1_score_bounds']
+    agent2_cols = ['agent2_selection', 'agent2_exploration_const', 'agent2_playout', 'agent2_score_bounds']
+    df[agent1_cols] = df['agent1'].str.split('-', expand=True).iloc[:, 1:]
+    df[agent2_cols] = df['agent2'].str.split('-', expand=True).iloc[:, 1:]
+    return df
+
+
+def process_train_data(
     df_train: pd.DataFrame,
-    df_test: pd.DataFrame = None,
     scale_utility: bool = True
 ):
-    # Splitting agent1 and agent2 into their subfields
-    def split_agent_fields(df):
-        agent1_cols = ['agent1_selection', 'agent1_exploration_const', 'agent1_playout', 'agent1_score_bounds']
-        agent2_cols = ['agent2_selection', 'agent2_exploration_const', 'agent2_playout', 'agent2_score_bounds']
-        df[agent1_cols] = df['agent1'].str.split('-', expand=True).iloc[:, 1:]
-        df[agent2_cols] = df['agent2'].str.split('-', expand=True).iloc[:, 1:]
-        return df
-
     df_train = split_agent_fields(df_train)
-    if df_test is not None:
-        df_test = split_agent_fields(df_test)
 
     # Identify numerical and categorical columns
     numerical_cols = df_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
@@ -44,9 +42,6 @@ def preprocess_data(
     encoder = OrdinalEncoder()
     df_train[categorical_cols] = encoder.fit_transform(df_train[categorical_cols])
     df_train[categorical_cols] = df_train[categorical_cols].astype(int)
-    if df_test is not None:
-        df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
-        df_test[categorical_cols] = df_test[categorical_cols].astype(int)
 
     # Scale the target variable 'utility_agent1' to be between 0 and 1 if scale_utility is True
     if scale_utility:
@@ -56,9 +51,18 @@ def preprocess_data(
             "(utility_agent1 - @min_utility) / (@max_utility - @min_utility)"
         )
 
-    if df_test is not None:
-        return df_train, df_test, numerical_cols, categorical_cols
-    else:
-        return df_train, numerical_cols, categorical_cols
+    return df_train, numerical_cols, categorical_cols, encoder
 
 
+def process_test_data(
+    df_test: pd.DataFrame,
+    categorical_cols: list,
+    encoder: OrdinalEncoder
+):
+    df_test = split_agent_fields(df_test)
+
+    # Apply ordinal encoding to categorical columns
+    df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
+    df_test[categorical_cols] = df_test[categorical_cols].astype(int)
+
+    return df_test
