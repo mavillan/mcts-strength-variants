@@ -13,6 +13,7 @@ def split_agent_fields(df):
 
 def process_train_data(
     df_train: pd.DataFrame,
+    scale: bool = False,
 ):
     df_train = split_agent_fields(df_train)
 
@@ -44,8 +45,11 @@ def process_train_data(
     df_train[categorical_cols] = df_train[categorical_cols].astype(int)
 
     # Fit and transform the numerical columns of df_train
-    scaler = StandardScaler()
-    df_train[numerical_cols] = scaler.fit_transform(df_train[numerical_cols])
+    if scale:
+        scaler = StandardScaler()
+        df_train[numerical_cols] = scaler.fit_transform(df_train[numerical_cols])
+    else:
+        scaler = None
 
     df_train[numerical_cols] = df_train[numerical_cols].astype(np.float32)
     df_train[categorical_cols] = df_train[categorical_cols].astype(np.int32)
@@ -58,7 +62,7 @@ def process_test_data(
     numerical_cols: list,
     categorical_cols: list,
     encoder: OrdinalEncoder,
-    scaler: StandardScaler
+    scaler: StandardScaler = None
 ):
     df_test = split_agent_fields(df_test)
 
@@ -66,7 +70,8 @@ def process_test_data(
     df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
 
     # Fit and transform the numerical columns of df_test
-    df_test[numerical_cols] = scaler.transform(df_test[numerical_cols])
+    if scaler is not None:
+        df_test[numerical_cols] = scaler.transform(df_test[numerical_cols])
 
     df_test[numerical_cols] = df_test[numerical_cols].astype(np.float32)
     df_test[categorical_cols] = df_test[categorical_cols].astype(np.int32)
