@@ -34,10 +34,12 @@ def process_train_data(
     # Remove all NaN/null numerical columns
     all_nan_cols = df_train[numerical_cols].columns[df_train[numerical_cols].isna().all()]
     numerical_cols = [col for col in numerical_cols if col not in all_nan_cols.tolist()]
+    print("number of all nan cols: ", len(all_nan_cols))
 
     # Remove constant columns
-    constant_cols = df_train[numerical_cols].std()[df_train[numerical_cols].std() == 0].index.tolist()
+    constant_cols = df_train[numerical_cols].columns[df_train[numerical_cols].std() == 0]
     numerical_cols = [col for col in numerical_cols if col not in constant_cols]
+    print("number of constant cols: ", len(constant_cols))
 
     # Apply ordinal encoding to categorical columns
     encoder = OrdinalEncoder()
