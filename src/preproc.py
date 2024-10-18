@@ -14,22 +14,24 @@ def split_agent_fields(df):
 def process_train_data(
     df_train: pd.DataFrame,
     scale: bool = False,
+    numerical_cols: list = None,
+    categorical_cols: list = None,
 ):
     df_train = split_agent_fields(df_train)
 
     # Identify numerical and categorical columns
-    numerical_cols = df_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
-    categorical_cols = df_train.select_dtypes(include=['object']).columns.tolist()
-
-    # Exclude Id, target columns and EnglishRules, LudRules from categoricals
-    numerical_cols = [
-        col for col in numerical_cols 
-        if col not in ['Id', 'num_wins_agent1', 'num_draws_agent1', 'num_losses_agent1', 'utility_agent1']
-    ]
-    categorical_cols = [
-        col for col in categorical_cols 
-        if col not in ['GameRulesetName','EnglishRules', 'LudRules']
-    ]
+    if numerical_cols is None:
+        numerical_cols = df_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        numerical_cols = [
+            col for col in numerical_cols 
+            if col not in ['Id', 'num_wins_agent1', 'num_draws_agent1', 'num_losses_agent1', 'utility_agent1']
+        ]
+    if categorical_cols is None:
+        categorical_cols = df_train.select_dtypes(include=['object']).columns.tolist()
+        categorical_cols = [
+            col for col in categorical_cols 
+            if col not in ['GameRulesetName','EnglishRules', 'LudRules']
+        ]
 
     # Remove all NaN/null numerical columns
     all_nan_cols = df_train[numerical_cols].columns[df_train[numerical_cols].isna().all()]
