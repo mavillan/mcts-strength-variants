@@ -58,6 +58,11 @@ def process_train_data(
     df_train[numerical_cols] = df_train[numerical_cols].astype(np.float32)
     df_train[categorical_cols] = df_train[categorical_cols].astype(np.int32)
 
+    # for CV purposes
+    df_train["utility_agent1_rank"] = (
+        df_train["utility_agent1"].rank(method='dense', ascending=True).astype(int)
+    )
+
     return df_train, numerical_cols, categorical_cols, encoder, scaler
 
 
