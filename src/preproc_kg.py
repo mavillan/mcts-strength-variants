@@ -1,88 +1,445 @@
 import numpy as np
 import pandas as pd
+import re
+import gc
+import dill
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import StratifiedGroupKFold
+from catboost import CatBoostRegressor
 
 
-def split_agent_fields(df):
-    agent1_cols = ['agent1_selection', 'agent1_exploration_const', 'agent1_playout', 'agent1_score_bounds']
-    agent2_cols = ['agent2_selection', 'agent2_exploration_const', 'agent2_playout', 'agent2_score_bounds']
-    df[agent1_cols] = df['agent1'].str.split('-', expand=True).iloc[:, 1:]
-    df[agent2_cols] = df['agent2'].str.split('-', expand=True).iloc[:, 1:]
-    return df
+class Preprocessor():
+    def __init__(self, seed=2024, target='utility_agent1', train=None, num_folds=10, 
+                 CV_LB_path="/kaggle/input/mcts-eda-about-cv-and-lb/1018CV_LB.csv"):
+        self.seed = seed
+        self.target = target
+        self.train = train
+        self.model_paths = []  # train and inference model
+        self.tfidf_paths = []  # tfidf models paths
+        self.num_folds = num_folds
+        # check CV and LB 
+        self.check = pd.read_csv(CV_LB_path)
+        
+    # clean str columns
+    def clean(self, df, col):
+        # fillna with 'nan'
+        df[col] = df[col].fillna("nan")
+        # string lower
+        df[col] = df[col].apply(lambda x: x.lower())
+        # think about 'MCTS-UCB1-0.6-NST-false'
+        ps = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'
+        for p in ps:
+            df[col] = df[col].apply(lambda x: x.replace(p, ' '))
+        return df
+    
+    def ARI(self, txt):
+        characters = len(txt)
+        words = len(re.split(' |\\n|\\.|\\?|\\!|\,', txt))
+        sentence = len(re.split('\\.|\\?|\\!', txt))
+        ari_score = 4.71 * (characters/words) + 0.5 * (words/sentence) - 21.43
+        return ari_score
 
+    """
+    http://www.supermagnus.com/mac/Word_Counter/index.html
+    McAlpine EFLAW© Test
+         (W + SW) / S
+    McAlpine EFLAW© Readability
+         Scale:
+         1-20: Easy
+         21-25: Quite Easy
+         26-29: Mildly Difficult
+         ≥ 30: Very Confusing
+         S:total sentences
+         W:total words
+    """
+    def McAlpine_EFLAW(self, txt):
+        W = len(re.split(' |\\n|\\.|\\?|\\!|\,', txt))
+        S = len(re.split('\\.|\\?|\\!', txt))
+        mcalpine_eflaw_score = (W + S*W) / S
+        return mcalpine_eflaw_score
 
-def process_train_data(
-    df_train: pd.DataFrame,
-    scale: bool = False,
-    numerical_cols: list = None,
-    categorical_cols: list = None,
-):
-    df_train = split_agent_fields(df_train)
+    """
+    https://readable.com/readability/coleman-liau-readability-index/
+    =0.0588*L-0.296*S-15.8
+    """
+    def CLRI(self, txt):
+        characters = len(txt)
+        words = len(re.split(' |\\n|\\.|\\?|\\!|\,', txt))
+        sentence = len(re.split('\\.|\\?|\\!', txt))
+        L = 100 * characters / words
+        S = 100 * sentence / words
+        clri_score = 0.0588 * L - 0.296 * S - 15.8
+        return clri_score
+        
+    # save models after training
+    def pickle_dump(self, obj, path):
+        # open path, binary write
+        with open(path, mode="wb") as f:
+            dill.dump(obj, f, protocol=4)
 
-    # Identify numerical and categorical columns
-    if numerical_cols is None:
-        numerical_cols = df_train.select_dtypes(include=['int64', 'float64']).columns.tolist()
-        numerical_cols = [
-            col for col in numerical_cols 
-            if col not in ['Id', 'num_wins_agent1', 'num_draws_agent1', 'num_losses_agent1', 'utility_agent1']
+    # load models when inference
+    def pickle_load(self, path):
+        # open path, binary read
+        with open(path, mode="rb") as f:
+            data = dill.load(f)
+            return data
+    
+    # reduce df memory
+    def reduce_mem_usage(self, df, float16_as32=True):
+        start_mem = df.memory_usage().sum() / 1024**2
+        print('Memory usage of dataframe is {:.2f} MB'.format(start_mem))
+
+        for col in df.columns:
+            col_type = df[col].dtype
+            if col_type != object and str(col_type) != 'category':
+                c_min, c_max = df[col].min(), df[col].max()
+                if str(col_type)[:3] == 'int':
+                    if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                        df[col] = df[col].astype(np.int8)
+                    elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                        df[col] = df[col].astype(np.int16)
+                    elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                        df[col] = df[col].astype(np.int32)
+                    elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
+                        df[col] = df[col].astype(np.int64)  
+                else:  # float
+                    if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                        if float16_as32:
+                            df[col] = df[col].astype(np.float32)
+                        else:
+                            df[col] = df[col].astype(np.float16)  
+                    elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                        df[col] = df[col].astype(np.float32)
+                    else:
+                        df[col] = df[col].astype(np.float64)
+
+        # calculate memory usage after optimization
+        end_mem = df.memory_usage().sum() / 1024**2
+        print('Memory usage after optimization is: {:.2f} MB'.format(end_mem))
+        print('Decreased by {:.1f}%'.format(100 * (start_mem - end_mem) / start_mem))
+
+        return df
+        
+    def FE(self, df, mode='train'):
+        print(f"FE:{mode}")
+
+        print("agent position feature")
+        # agent is positive or negative
+        total_agent = ['MCTS-ProgressiveHistory-0.1-MAST-false', 'MCTS-ProgressiveHistory-0.1-MAST-true', 
+                      'MCTS-ProgressiveHistory-0.1-NST-false', 'MCTS-ProgressiveHistory-0.1-NST-true',
+                      'MCTS-ProgressiveHistory-0.1-Random200-false', 'MCTS-ProgressiveHistory-0.1-Random200-true',
+                      'MCTS-ProgressiveHistory-0.6-MAST-false', 'MCTS-ProgressiveHistory-0.6-MAST-true',
+                      'MCTS-ProgressiveHistory-0.6-NST-false', 'MCTS-ProgressiveHistory-0.6-NST-true',
+                      'MCTS-ProgressiveHistory-0.6-Random200-false', 'MCTS-ProgressiveHistory-0.6-Random200-true',
+                      'MCTS-ProgressiveHistory-1.41421356237-MAST-false', 'MCTS-ProgressiveHistory-1.41421356237-MAST-true',
+                      'MCTS-ProgressiveHistory-1.41421356237-NST-false', 'MCTS-ProgressiveHistory-1.41421356237-NST-true',
+                      'MCTS-ProgressiveHistory-1.41421356237-Random200-false', 'MCTS-ProgressiveHistory-1.41421356237-Random200-true',
+                      'MCTS-UCB1-0.1-MAST-false', 'MCTS-UCB1-0.1-MAST-true', 'MCTS-UCB1-0.1-NST-false',
+                      'MCTS-UCB1-0.1-NST-true', 'MCTS-UCB1-0.1-Random200-false', 'MCTS-UCB1-0.1-Random200-true',
+                      'MCTS-UCB1-0.6-MAST-false', 'MCTS-UCB1-0.6-MAST-true', 'MCTS-UCB1-0.6-NST-false',
+                      'MCTS-UCB1-0.6-NST-true', 'MCTS-UCB1-0.6-Random200-false', 'MCTS-UCB1-0.6-Random200-true',
+                      'MCTS-UCB1-1.41421356237-MAST-false', 'MCTS-UCB1-1.41421356237-MAST-true',
+                      'MCTS-UCB1-1.41421356237-NST-false', 'MCTS-UCB1-1.41421356237-NST-true',
+                      'MCTS-UCB1-1.41421356237-Random200-false', 'MCTS-UCB1-1.41421356237-Random200-true',
+                      'MCTS-UCB1GRAVE-0.1-MAST-false', 'MCTS-UCB1GRAVE-0.1-MAST-true', 'MCTS-UCB1GRAVE-0.1-NST-false',
+                      'MCTS-UCB1GRAVE-0.1-NST-true', 'MCTS-UCB1GRAVE-0.1-Random200-false', 'MCTS-UCB1GRAVE-0.1-Random200-true',
+                      'MCTS-UCB1GRAVE-0.6-MAST-false', 'MCTS-UCB1GRAVE-0.6-MAST-true', 'MCTS-UCB1GRAVE-0.6-NST-false',
+                      'MCTS-UCB1GRAVE-0.6-NST-true', 'MCTS-UCB1GRAVE-0.6-Random200-false', 'MCTS-UCB1GRAVE-0.6-Random200-true',
+                      'MCTS-UCB1GRAVE-1.41421356237-MAST-false', 'MCTS-UCB1GRAVE-1.41421356237-MAST-true',
+                      'MCTS-UCB1GRAVE-1.41421356237-NST-false', 'MCTS-UCB1GRAVE-1.41421356237-NST-true',
+                      'MCTS-UCB1GRAVE-1.41421356237-Random200-false', 'MCTS-UCB1GRAVE-1.41421356237-Random200-true',
+                      'MCTS-UCB1Tuned-0.1-MAST-false', 'MCTS-UCB1Tuned-0.1-MAST-true', 'MCTS-UCB1Tuned-0.1-NST-false',
+                      'MCTS-UCB1Tuned-0.1-NST-true', 'MCTS-UCB1Tuned-0.1-Random200-false', 'MCTS-UCB1Tuned-0.1-Random200-true',
+                      'MCTS-UCB1Tuned-0.6-MAST-false', 'MCTS-UCB1Tuned-0.6-MAST-true', 'MCTS-UCB1Tuned-0.6-NST-false',
+                      'MCTS-UCB1Tuned-0.6-NST-true', 'MCTS-UCB1Tuned-0.6-Random200-false', 'MCTS-UCB1Tuned-0.6-Random200-true',
+                      'MCTS-UCB1Tuned-1.41421356237-MAST-false', 'MCTS-UCB1Tuned-1.41421356237-MAST-true',
+                      'MCTS-UCB1Tuned-1.41421356237-NST-false', 'MCTS-UCB1Tuned-1.41421356237-NST-true',
+                      'MCTS-UCB1Tuned-1.41421356237-Random200-false', 'MCTS-UCB1Tuned-1.41421356237-Random200-true']
+
+        agent1, agent2 = df['agent1'].values, df['agent2'].values
+        for i in range(len(total_agent)):
+            value = np.zeros(len(df))
+            for j in range(len(df)):
+                if agent1[j] == total_agent[i]:
+                    value[j] += 1
+                elif agent2[j] == total_agent[i]:
+                    value[j] -= 1
+            df[f'agent_{total_agent[i]}'] = value
+
+        # Feature engineering
+        df['area'] = df['NumRows'] * df['NumColumns']
+        df['row_equal_col'] = (df['NumColumns'] == df['NumRows']).astype(np.int8)
+        df['Playouts/Moves'] = df['PlayoutsPerSecond'] / (df['MovesPerSecond'] + 1e-15)
+        df['EfficiencyPerPlayout'] = df['MovesPerSecond'] / (df['PlayoutsPerSecond'] + 1e-15)
+        df['TurnsDurationEfficiency'] = df['DurationActions'] / (df['DurationTurnsStdDev'] + 1e-15)
+        df['AdvantageBalanceRatio'] = df['AdvantageP1'] / (df['Balance'] + 1e-15)
+        df['ActionTimeEfficiency'] = df['DurationActions'] / (df['MovesPerSecond'] + 1e-15)
+        df['StandardizedTurnsEfficiency'] = df['DurationTurnsStdDev'] / (df['DurationActions'] + 1e-15)
+        df['AdvantageTimeImpact'] = df['AdvantageP1'] / (df['DurationActions'] + 1e-15)
+        df['DurationToComplexityRatio'] = df['DurationActions'] / (df['StateTreeComplexity'] + 1e-15)
+        df['NormalizedGameTreeComplexity'] = df['GameTreeComplexity'] / (df['StateTreeComplexity'] + 1e-15)
+        df['ComplexityBalanceInteraction'] = df['Balance'] * df['GameTreeComplexity']
+        df['OverallComplexity'] = df['StateTreeComplexity'] + df['GameTreeComplexity']
+        df['ComplexityPerPlayout'] = df['GameTreeComplexity'] / (df['PlayoutsPerSecond'] + 1e-15)
+        df['TurnsNotTimeouts/Moves'] = df['DurationTurnsNotTimeouts'] / (df['MovesPerSecond'] + 1e-15)
+        df['Timeouts/DurationActions'] = df['Timeouts'] / (df['DurationActions'] + 1e-15)
+        df['OutcomeUniformity/AdvantageP1'] = df['OutcomeUniformity'] / (df['AdvantageP1'] + 1e-15)
+        df['ComplexDecisionRatio'] = df['StepDecisionToEnemy'] + df['SlideDecisionToEnemy'] + df['HopDecisionMoreThanOne']
+        df['AggressiveActionsRatio'] = df['StepDecisionToEnemy'] + df['HopDecisionEnemyToEnemy'] + df['HopDecisionFriendToEnemy'] + df['SlideDecisionToEnemy']
+        
+        print("deal with outliers")
+        df['PlayoutsPerSecond'] = df['PlayoutsPerSecond'].clip(0, 25000)
+        df['MovesPerSecond'] = df['MovesPerSecond'].clip(0, 1000000)
+        
+        print("agent1 agent2 feature")
+        cols = ['selection', 'exploration_const', 'playout', 'score_bounds']
+        for i in range(len(cols)):
+            for j in range(2):
+                df[f'{cols[i]}{j+1}'] = df[f'agent{j+1}'].apply(lambda x: x.split('-')[i+1])
+
+        print(f"one_hot_encoder")
+        # train set nunique is (2,10)
+        onehot_cols = [
+            ['NumOffDiagonalDirections', [0.0, 4.82, 2.0, 5.18, 3.08, 0.06]],
+            ['NumLayers', [1, 0, 4, 5]],
+            ['NumPhasesBoard', [3, 2, 1, 5, 4]],
+            ['NumContainers', [1, 4, 3, 2]],
+            ['NumDice', [0, 2, 1, 4, 6, 3, 5, 7]],
+            ['ProposeDecisionFrequency', [0.0, 0.05, 0.01]],
+            ['PromotionDecisionFrequency', [0.0, 0.01, 0.03, 0.02, 0.11, 0.05, 0.04]],
+            ['SlideDecisionToFriendFrequency', [0.0, 0.19, 0.06]],
+            ['LeapDecisionToEnemyFrequency', [0.0, 0.04, 0.01, 0.02, 0.07, 0.03, 0.14, 0.08]],
+            ['HopDecisionFriendToFriendFrequency', [0.0, 0.13, 0.09]],
+            ['HopDecisionEnemyToEnemyFrequency', [0.0, 0.01, 0.2, 0.03]],
+            ['HopDecisionFriendToEnemyFrequency', [0.0, 0.01, 0.09, 0.25, 0.02]],
+            ['FromToDecisionFrequency', [0.0, 0.38, 1.0, 0.31, 0.94, 0.67]],
+            ['ProposeEffectFrequency', [0.0, 0.01, 0.03]],
+            ['PushEffectFrequency', [0.0, 0.5, 0.96, 0.25]],
+            ['FlipFrequency', [0.0, 0.87, 1.0, 0.96]],
+            ['SetCountFrequency', [0.0, 0.62, 0.54, 0.02]],
+            ['DirectionCaptureFrequency', [0.0, 0.55, 0.54]],
+            ['EncloseCaptureFrequency', [0.0, 0.08, 0.1, 0.07, 0.12, 0.02, 0.09]],
+            ['InterveneCaptureFrequency', [0.0, 0.01, 0.14, 0.04]],
+            ['SurroundCaptureFrequency', [0.0, 0.01, 0.03, 0.02]],
+            ['NumPlayPhase', [1, 2, 3, 4, 5, 6, 7, 8]],
+            ['LineLossFrequency', [0.0, 0.96, 0.87, 0.46, 0.26, 0.88, 0.94]],
+            ['ConnectionEndFrequency', [0.0, 0.19, 1.0, 0.23, 0.94, 0.35, 0.97]],
+            ['ConnectionLossFrequency', [0.0, 0.54, 0.78]],
+            ['GroupEndFrequency', [0.0, 1.0, 0.11, 0.79]],
+            ['GroupWinFrequency', [0.0, 0.11, 1.0]],
+            ['LoopEndFrequency', [0.0, 0.14, 0.66]],
+            ['LoopWinFrequency', [0.0, 0.14, 0.66]],
+            ['PatternEndFrequency', [0.0, 0.63, 0.35]],
+            ['PatternWinFrequency', [0.0, 0.63, 0.35]],
+            ['NoTargetPieceWinFrequency', [0.0, 0.72, 0.77, 0.95, 0.32, 1.0]],
+            ['EliminatePiecesLossFrequency', [0.0, 0.85, 0.96, 0.68]],
+            ['EliminatePiecesDrawFrequency', [0.0, 0.03, 0.91, 1.0, 0.36, 0.86]],
+            ['NoOwnPiecesLossFrequency', [0.0, 1.0, 0.68]],
+            ['FillEndFrequency', [0.0, 1.0, 0.04, 0.01, 0.99, 0.72]],
+            ['FillWinFrequency', [0.0, 1.0, 0.04, 0.01, 0.99]],
+            ['ReachDrawFrequency', [0.0, 0.9, 0.98]],
+            ['ScoringLossFrequency', [0.0, 0.6, 0.62]],
+            ['NoMovesLossFrequency', [0.0, 1.0, 0.13, 0.06]],
+            ['NoMovesDrawFrequency', [0.0, 0.01, 0.04, 0.03, 0.22]],
+            ['BoardSitesOccupiedChangeNumTimes', [0.0, 0.06, 0.42, 0.12, 0.14, 0.94]],
+            ['BranchingFactorChangeNumTimesn', [0.0, 0.3, 0.02, 0.07, 0.04, 0.13, 0.01, 0.21, 0.03]],
+            ['PieceNumberChangeNumTimes', [0.0, 0.06, 0.42, 0.12, 0.14, 1.0]],
+            ['selection1', ['ProgressiveHistory', 'UCB1', 'UCB1GRAVE', 'UCB1Tuned']],
+            ['selection2', ['ProgressiveHistory', 'UCB1GRAVE', 'UCB1', 'UCB1Tuned']],
+            ['exploration_const1', ['0.1', '0.6', '1.41421356237']],
+            ['exploration_const2', ['0.6', '0.1', '1.41421356237']],
+            ['playout1', ['MAST', 'NST', 'Random200']],
+            ['playout2', ['Random200', 'NST', 'MAST']]
         ]
-    if categorical_cols is None:
-        categorical_cols = df_train.select_dtypes(include=['object']).columns.tolist()
-        categorical_cols = [
-            col for col in categorical_cols 
-            if col not in ['GameRulesetName','EnglishRules', 'LudRules']
+
+        for col, unique in onehot_cols:
+            for u in unique:
+                df[f'{col}_{u}'] = (df[col] == u).astype(np.int8)
+                
+        print("deal with LudRules") 
+        print("1:drop game")
+        def drop_gamename(rule):
+            rule = rule[len('(game "'):]
+            for i in range(len(rule)):
+                if rule[i] == '"':
+                    return rule[i+1:]
+        df['LudRules'] = df['LudRules'].apply(lambda x: drop_gamename(x))
+
+        print("2:player")
+        def get_player(rule):
+            player = ''
+            stack = []  # stack match () {}.
+            for i in range(len(rule)):
+                player += rule[i]
+                if rule[i] in ['(', '{']:
+                    stack.append(rule[i])
+                elif rule[i] in [')', '}']:
+                    stack = stack[:-1]
+                    if len(stack) == 0:
+                        return player
+
+        df['player'] = df['LudRules'].apply(lambda rule: get_player(rule))
+        df = self.clean(df, 'player')
+        df['player_len'] = df['player'].apply(len)
+        df['LudRules'] = [rule[len(player):] for player, rule in zip(df['player'], df['LudRules'])]
+        df.drop(['player'], axis=1, inplace=True)
+          
+        print("Rules readable")
+        for rule in ['EnglishRules', 'LudRules']:
+            df[rule + "_ARI"] = df[rule].apply(lambda x: self.ARI(x))
+            df[rule + "CLRI"] = df[rule].apply(lambda x: self.CLRI(x))
+            df[rule + "McAlpine_EFLAW"] = df[rule].apply(lambda x: self.McAlpine_EFLAW(x))
+                
+        df['PlayoutsPerSecond/MovesPerSecond'] = df['PlayoutsPerSecond'] / df['MovesPerSecond']
+        
+        # model selection useless features
+        drop_cols = [
+            'Cooperation', 'Team', 'TriangleShape', 'DiamondShape', 'SpiralShape', 'StarShape', 'SquarePyramidalShape',
+            'SemiRegularTiling', 'CircleTiling', 'SpiralTiling', 'MancalaThreeRows', 'MancalaSixRows', 'MancalaCircular',
+            'AlquerqueBoardWithOneTriangle', 'AlquerqueBoardWithTwoTriangles', 'AlquerqueBoardWithFourTriangles',
+            'AlquerqueBoardWithEightTriangles', 'ThreeMensMorrisBoard', 'ThreeMensMorrisBoardWithTwoTriangles',
+            'NineMensMorrisBoard', 'StarBoard', 'PachisiBoard', 'Boardless', 'NumColumns', 'NumCorners',
+            'NumOffDiagonalDirections', 'NumLayers', 'NumCentreSites', 'NumConvexCorners', 'NumPhasesBoard',
+            'NumContainers', 'Piece', 'PieceValue', 'PieceRotation', 'PieceDirection', 'LargePiece', 'Tile',
+            'NumComponentsType', 'NumDice', 'OpeningContract', 'SwapOption', 'Repetition', 'TurnKo', 'PositionalSuperko',
+            'AutoMove', 'InitialRandomPlacement', 'InitialScore', 'InitialCost', 'Moves', 'VoteDecision',
+            'SwapPlayersDecision', 'SwapPlayersDecisionFrequency', 'ProposeDecision', 'ProposeDecisionFrequency',
+            'PromotionDecisionFrequency', 'RotationDecision', 'RotationDecisionFrequency', 'StepDecisionToFriend',
+            'StepDecisionToFriendFrequency', 'StepDecisionToEnemy', 'SlideDecisionToEnemy', 'SlideDecisionToEnemyFrequency',
+            'SlideDecisionToFriend', 'SlideDecisionToFriendFrequency', 'LeapDecision', 'LeapDecisionFrequency',
+            'LeapDecisionToEmpty', 'LeapDecisionToEmptyFrequency', 'LeapDecisionToEnemy', 'LeapDecisionToEnemyFrequency',
+            'HopDecisionFriendToEmpty', 'HopDecisionFriendToEmptyFrequency', 'HopDecisionFriendToFriendFrequency',
+            'HopDecisionEnemyToEnemy', 'HopDecisionEnemyToEnemyFrequency', 'HopDecisionFriendToEnemy',
+            'HopDecisionFriendToEnemyFrequency', 'FromToDecisionFrequency', 'FromToDecisionEnemy',
+            'FromToDecisionEnemyFrequency', 'FromToDecisionFriend', 'SwapPiecesDecision', 'SwapPiecesDecisionFrequency',
+            'ShootDecision', 'ShootDecisionFrequency', 'VoteEffect', 'SwapPlayersEffect', 'PassEffect', 'ProposeEffect',
+            'ProposeEffectFrequency', 'AddEffectFrequency', 'SowFrequency', 'SowCapture', 'SowCaptureFrequency',
+            'SowRemove', 'SowBacktracking', 'SowBacktrackingFrequency', 'SowProperties', 'SowOriginFirst', 'SowCCW',
+            'PromotionEffectFrequency', 'PushEffect', 'PushEffectFrequency', 'Flip', 'FlipFrequency', 'SetNextPlayer',
+            'SetValue', 'SetValueFrequency', 'SetCount', 'SetCountFrequency', 'SetRotation', 'SetRotationFrequency',
+            'StepEffect', 'SlideEffect', 'LeapEffect', 'ByDieMove', 'MaxDistance', 'ReplacementCaptureFrequency',
+            'HopCaptureMoreThanOne', 'DirectionCapture', 'DirectionCaptureFrequency', 'EncloseCaptureFrequency',
+            'CustodialCapture', 'CustodialCaptureFrequency', 'InterveneCapture', 'InterveneCaptureFrequency',
+            'SurroundCapture', 'SurroundCaptureFrequency', 'CaptureSequence', 'CaptureSequenceFrequency', 'Group',
+            'Loop', 'Pattern', 'PathExtent', 'Territory', 'Fill', 'CanNotMove', 'Threat', 'CountPiecesMoverComparison',
+            'ProgressCheck', 'RotationalDirection', 'SameLayerDirection', 'ForwardDirection', 'BackwardDirection',
         ]
+        #model selection useless featurte
+        drop_cols=['Cooperation', 'Team', 'TriangleShape', 'DiamondShape', 'SpiralShape', 'StarShape', 'SquarePyramidalShape', 'SemiRegularTiling', 'CircleTiling', 'SpiralTiling', 'MancalaThreeRows', 'MancalaSixRows', 'MancalaCircular', 'AlquerqueBoardWithOneTriangle', 'AlquerqueBoardWithTwoTriangles', 'AlquerqueBoardWithFourTriangles', 'AlquerqueBoardWithEightTriangles', 'ThreeMensMorrisBoard', 'ThreeMensMorrisBoardWithTwoTriangles', 'NineMensMorrisBoard', 'StarBoard', 'PachisiBoard', 'Boardless', 'NumColumns', 'NumCorners', 'NumOffDiagonalDirections', 'NumLayers', 'NumCentreSites', 'NumConvexCorners', 'NumPhasesBoard', 'NumContainers', 'Piece', 'PieceValue', 'PieceRotation', 'PieceDirection', 'LargePiece', 'Tile', 'NumComponentsType', 'NumDice', 'OpeningContract', 'SwapOption', 'Repetition', 'TurnKo', 'PositionalSuperko', 'AutoMove', 'InitialRandomPlacement', 'InitialScore', 'InitialCost', 'Moves', 'VoteDecision', 'SwapPlayersDecision', 'SwapPlayersDecisionFrequency', 'ProposeDecision', 'ProposeDecisionFrequency', 'PromotionDecisionFrequency', 'RotationDecision', 'RotationDecisionFrequency', 'StepDecisionToFriend', 'StepDecisionToFriendFrequency', 'StepDecisionToEnemy', 'SlideDecisionToEnemy', 'SlideDecisionToEnemyFrequency', 'SlideDecisionToFriend', 'SlideDecisionToFriendFrequency', 'LeapDecision', 'LeapDecisionFrequency', 'LeapDecisionToEmpty', 'LeapDecisionToEmptyFrequency', 'LeapDecisionToEnemy', 'LeapDecisionToEnemyFrequency', 'HopDecisionFriendToEmpty', 'HopDecisionFriendToEmptyFrequency', 'HopDecisionFriendToFriendFrequency', 'HopDecisionEnemyToEnemy', 'HopDecisionEnemyToEnemyFrequency', 'HopDecisionFriendToEnemy', 'HopDecisionFriendToEnemyFrequency', 'FromToDecisionFrequency', 'FromToDecisionEnemy', 'FromToDecisionEnemyFrequency', 'FromToDecisionFriend', 'SwapPiecesDecision', 'SwapPiecesDecisionFrequency', 'ShootDecision', 'ShootDecisionFrequency', 'VoteEffect', 'SwapPlayersEffect', 'PassEffect', 'ProposeEffect', 'ProposeEffectFrequency', 'AddEffectFrequency', 'SowFrequency', 'SowCapture', 'SowCaptureFrequency', 'SowRemove', 'SowBacktracking', 'SowBacktrackingFrequency', 'SowProperties', 'SowOriginFirst', 'SowCCW', 'PromotionEffectFrequency', 'PushEffect', 'PushEffectFrequency', 'Flip', 'FlipFrequency', 'SetNextPlayer', 'SetValue', 'SetValueFrequency', 'SetCount', 'SetCountFrequency', 'SetRotation', 'SetRotationFrequency', 'StepEffect', 'SlideEffect', 'LeapEffect', 'ByDieMove', 'MaxDistance', 'ReplacementCaptureFrequency', 'HopCaptureMoreThanOne', 'DirectionCapture', 'DirectionCaptureFrequency', 'EncloseCaptureFrequency', 'CustodialCapture', 'CustodialCaptureFrequency', 'InterveneCapture', 'InterveneCaptureFrequency', 'SurroundCapture', 'SurroundCaptureFrequency', 'CaptureSequence', 'CaptureSequenceFrequency', 'Group', 'Loop', 'Pattern', 'PathExtent', 'Territory', 'Fill', 'CanNotMove', 'Threat', 'CountPiecesMoverComparison', 'ProgressCheck', 'RotationalDirection', 'SameLayerDirection', 'ForwardDirection', 'BackwardDirection', 'BackwardsDirection', 'LeftwardDirection', 'RightwardsDirection', 'LeftwardsDirection', 'ForwardLeftDirection', 'ForwardRightDirection', 'BackwardLeftDirection', 'BackwardRightDirection', 'SameDirection', 'OppositeDirection', 'NumPlayPhase', 'LineLoss', 'LineLossFrequency', 'LineDraw', 'ConnectionEnd', 'ConnectionEndFrequency', 'ConnectionWinFrequency', 'ConnectionLoss', 'ConnectionLossFrequency', 'GroupEnd', 'GroupEndFrequency', 'GroupWin', 'GroupWinFrequency', 'GroupLoss', 'GroupDraw', 'LoopEnd', 'LoopEndFrequency', 'LoopWin', 'LoopWinFrequency', 'LoopLoss', 'PatternEnd', 'PatternEndFrequency', 'PatternWin', 'PatternWinFrequency', 'PathExtentEnd', 'PathExtentWin', 'PathExtentLoss', 'TerritoryEnd', 'TerritoryWin', 'TerritoryWinFrequency', 'Checkmate', 'CheckmateWin', 'NoTargetPieceEndFrequency', 'NoTargetPieceWin', 'NoTargetPieceWinFrequency', 'EliminatePiecesLoss', 'EliminatePiecesLossFrequency', 'EliminatePiecesDraw', 'EliminatePiecesDrawFrequency', 'NoOwnPiecesEnd', 'NoOwnPiecesWin', 'NoOwnPiecesLoss', 'NoOwnPiecesLossFrequency', 'FillEnd', 'FillEndFrequency', 'FillWin', 'FillWinFrequency', 'ReachWin', 'ReachLoss', 'ReachLossFrequency', 'ReachDraw', 'ReachDrawFrequency', 'ScoringLoss', 'ScoringLossFrequency', 'ScoringDraw', 'NoMovesLoss', 'NoMovesDrawFrequency', 'NoProgressEnd', 'NoProgressEndFrequency', 'NoProgressDraw', 'NoProgressDrawFrequency', 'BoardCoverageFull', 'BoardSitesOccupiedChangeNumTimes', 'BranchingFactorChangeLineBestFit', 'BranchingFactorChangeNumTimesn', 'DecisionFactorChangeNumTimes', 'MoveDistanceChangeSign', 'MoveDistanceChangeLineBestFit', 'PieceNumberChangeNumTimes', 'PieceNumberMaxIncrease', 'ScoreDifferenceMedian', 'ScoreDifferenceVariance', 'ScoreDifferenceChangeAverage', 'ScoreDifferenceChangeSign', 'ScoreDifferenceChangeLineBestFit', 'Math', 'Division', 'Modulo', 'Absolute', 'Exponentiation', 'Minimum', 'Maximum', 'Even', 'Odd', 'Visual', 'GraphStyle', 'MancalaStyle', 'PenAndPaperStyle', 'ShibumiStyle', 'BackgammonStyle', 'JanggiStyle', 'XiangqiStyle', 'ShogiStyle', 'TableStyle', 'SurakartaStyle', 'NoBoard', 'ChessComponent', 'KingComponent', 'QueenComponent', 'KnightComponent', 'RookComponent', 'BishopComponent', 'PawnComponent', 'FairyChessComponent', 'PloyComponent', 'ShogiComponent', 'XiangqiComponent', 'StrategoComponent', 'JanggiComponent', 'TaflComponent', 'StackType', 'Stack', 'ShowPieceValue', 'ShowPieceState', 'Implementation', 'StateType', 'StackState', 'VisitedSites', 'InternalCounter', 'SetInternalCounter', 'Efficiency', 'NumOffDiagonalDirections_0.0', 'NumOffDiagonalDirections_4.82', 'NumOffDiagonalDirections_2.0', 'NumOffDiagonalDirections_5.18', 'NumOffDiagonalDirections_3.08', 'NumOffDiagonalDirections_0.06', 'NumLayers_1', 'NumLayers_0', 'NumLayers_4', 'NumLayers_5', 'NumPhasesBoard_1', 'NumPhasesBoard_5', 'NumDice_0', 'NumDice_2', 'NumDice_6', 'NumDice_3', 'NumDice_5', 'NumDice_7', 'ProposeDecisionFrequency_0.0', 'ProposeDecisionFrequency_0.05', 'ProposeDecisionFrequency_0.01', 'PromotionDecisionFrequency_0.0', 'PromotionDecisionFrequency_0.01', 'PromotionDecisionFrequency_0.03', 'PromotionDecisionFrequency_0.02', 'PromotionDecisionFrequency_0.11', 'PromotionDecisionFrequency_0.05', 'PromotionDecisionFrequency_0.04', 'SlideDecisionToFriendFrequency_0.0', 'SlideDecisionToFriendFrequency_0.19', 'SlideDecisionToFriendFrequency_0.06', 'LeapDecisionToEnemyFrequency_0.0', 'LeapDecisionToEnemyFrequency_0.04', 'LeapDecisionToEnemyFrequency_0.01', 'LeapDecisionToEnemyFrequency_0.02', 'LeapDecisionToEnemyFrequency_0.07', 'LeapDecisionToEnemyFrequency_0.03', 'LeapDecisionToEnemyFrequency_0.14', 'LeapDecisionToEnemyFrequency_0.08', 'HopDecisionFriendToFriendFrequency_0.0', 'HopDecisionFriendToFriendFrequency_0.13', 'HopDecisionFriendToFriendFrequency_0.09', 'HopDecisionEnemyToEnemyFrequency_0.0', 'HopDecisionEnemyToEnemyFrequency_0.01', 'HopDecisionEnemyToEnemyFrequency_0.2', 'HopDecisionEnemyToEnemyFrequency_0.03', 'HopDecisionFriendToEnemyFrequency_0.0', 'HopDecisionFriendToEnemyFrequency_0.01', 'HopDecisionFriendToEnemyFrequency_0.09', 'HopDecisionFriendToEnemyFrequency_0.25', 'HopDecisionFriendToEnemyFrequency_0.02', 'FromToDecisionFrequency_0.0', 'FromToDecisionFrequency_0.38', 'FromToDecisionFrequency_1.0', 'FromToDecisionFrequency_0.31', 'FromToDecisionFrequency_0.94', 'FromToDecisionFrequency_0.67', 'ProposeEffectFrequency_0.0', 'ProposeEffectFrequency_0.01', 'ProposeEffectFrequency_0.03', 'PushEffectFrequency_0.0', 'PushEffectFrequency_0.5', 'PushEffectFrequency_0.96', 'PushEffectFrequency_0.25', 'FlipFrequency_0.0', 'FlipFrequency_0.87', 'FlipFrequency_1.0', 'FlipFrequency_0.96', 'SetCountFrequency_0.0', 'SetCountFrequency_0.62', 'SetCountFrequency_0.54', 'SetCountFrequency_0.02', 'DirectionCaptureFrequency_0.0', 'DirectionCaptureFrequency_0.55', 'DirectionCaptureFrequency_0.54', 'EncloseCaptureFrequency_0.0', 'EncloseCaptureFrequency_0.08', 'EncloseCaptureFrequency_0.1', 'EncloseCaptureFrequency_0.07', 'EncloseCaptureFrequency_0.12', 'EncloseCaptureFrequency_0.02', 'EncloseCaptureFrequency_0.09', 'InterveneCaptureFrequency_0.0', 'InterveneCaptureFrequency_0.01', 'InterveneCaptureFrequency_0.14', 'InterveneCaptureFrequency_0.04', 'SurroundCaptureFrequency_0.0', 'SurroundCaptureFrequency_0.01', 'SurroundCaptureFrequency_0.03', 'SurroundCaptureFrequency_0.02', 'NumPlayPhase_3', 'NumPlayPhase_4', 'NumPlayPhase_5', 'NumPlayPhase_6', 'NumPlayPhase_7', 'NumPlayPhase_8', 'LineLossFrequency_0.0', 'LineLossFrequency_0.96', 'LineLossFrequency_0.87', 'LineLossFrequency_0.46', 'LineLossFrequency_0.26', 'LineLossFrequency_0.88', 'LineLossFrequency_0.94', 'ConnectionEndFrequency_0.0', 'ConnectionEndFrequency_0.19', 'ConnectionEndFrequency_1.0', 'ConnectionEndFrequency_0.23', 'ConnectionEndFrequency_0.94', 'ConnectionEndFrequency_0.35', 'ConnectionEndFrequency_0.97', 'ConnectionLossFrequency_0.0', 'ConnectionLossFrequency_0.54', 'ConnectionLossFrequency_0.78', 'GroupEndFrequency_0.0', 'GroupEndFrequency_1.0', 'GroupEndFrequency_0.11', 'GroupEndFrequency_0.79', 'GroupWinFrequency_0.0', 'GroupWinFrequency_0.11', 'GroupWinFrequency_1.0', 'LoopEndFrequency_0.0', 'LoopEndFrequency_0.14', 'LoopEndFrequency_0.66', 'LoopWinFrequency_0.0', 'LoopWinFrequency_0.14', 'LoopWinFrequency_0.66', 'PatternEndFrequency_0.0', 'PatternEndFrequency_0.63', 'PatternEndFrequency_0.35', 'PatternWinFrequency_0.0', 'PatternWinFrequency_0.63', 'PatternWinFrequency_0.35', 'NoTargetPieceWinFrequency_0.0', 'NoTargetPieceWinFrequency_0.72', 'NoTargetPieceWinFrequency_0.77', 'NoTargetPieceWinFrequency_0.95', 'NoTargetPieceWinFrequency_0.32', 'NoTargetPieceWinFrequency_1.0', 'EliminatePiecesLossFrequency_0.0', 'EliminatePiecesLossFrequency_0.85', 'EliminatePiecesLossFrequency_0.96', 'EliminatePiecesLossFrequency_0.68', 'EliminatePiecesDrawFrequency_0.0', 'EliminatePiecesDrawFrequency_0.03', 'EliminatePiecesDrawFrequency_0.91', 'EliminatePiecesDrawFrequency_1.0', 'EliminatePiecesDrawFrequency_0.36', 'EliminatePiecesDrawFrequency_0.86', 'NoOwnPiecesLossFrequency_0.0', 'NoOwnPiecesLossFrequency_1.0', 'NoOwnPiecesLossFrequency_0.68', 'FillEndFrequency_0.0', 'FillEndFrequency_1.0', 'FillEndFrequency_0.04', 'FillEndFrequency_0.01', 'FillEndFrequency_0.99', 'FillEndFrequency_0.72', 'FillWinFrequency_0.0', 'FillWinFrequency_1.0', 'FillWinFrequency_0.04', 'FillWinFrequency_0.01', 'FillWinFrequency_0.99', 'ReachDrawFrequency_0.0', 'ReachDrawFrequency_0.9', 'ReachDrawFrequency_0.98', 'ScoringLossFrequency_0.0', 'ScoringLossFrequency_0.6', 'ScoringLossFrequency_0.62', 'NoMovesLossFrequency_0.0', 'NoMovesLossFrequency_1.0', 'NoMovesLossFrequency_0.13', 'NoMovesLossFrequency_0.06', 'NoMovesDrawFrequency_0.0', 'NoMovesDrawFrequency_0.01', 'NoMovesDrawFrequency_0.04', 'NoMovesDrawFrequency_0.03', 'NoMovesDrawFrequency_0.22', 'BoardSitesOccupiedChangeNumTimes_0.0', 'BoardSitesOccupiedChangeNumTimes_0.06', 'BoardSitesOccupiedChangeNumTimes_0.42', 'BoardSitesOccupiedChangeNumTimes_0.12', 'BoardSitesOccupiedChangeNumTimes_0.14', 'BoardSitesOccupiedChangeNumTimes_0.94', 'BranchingFactorChangeNumTimesn_0.0', 'BranchingFactorChangeNumTimesn_0.3', 'BranchingFactorChangeNumTimesn_0.02', 'BranchingFactorChangeNumTimesn_0.07', 'BranchingFactorChangeNumTimesn_0.04', 'BranchingFactorChangeNumTimesn_0.13', 'BranchingFactorChangeNumTimesn_0.01', 'BranchingFactorChangeNumTimesn_0.21', 'BranchingFactorChangeNumTimesn_0.03', 'PieceNumberChangeNumTimes_0.0', 'PieceNumberChangeNumTimes_0.06', 'PieceNumberChangeNumTimes_0.42', 'PieceNumberChangeNumTimes_0.12', 'PieceNumberChangeNumTimes_0.14', 'PieceNumberChangeNumTimes_1.0', 'KintsBoard', 'FortyStonesWithFourGapsBoard', 'Roll', 'SumDice', 'CheckmateFrequency', 'NumDice_4']
+        df.drop(['Id',#meaningless
+         #train nunique=1
+         'Properties', 'Format', 'Time', 'Discrete', 'Realtime', 'Turns', 'Alternating', 'Simultaneous', 'HiddenInformation', 'Match', 'AsymmetricRules', 'AsymmetricPlayRules', 'AsymmetricEndRules', 'AsymmetricSetup', 'Players', 'NumPlayers', 'Simulation', 'Solitaire', 'TwoPlayer', 'Multiplayer', 'Coalition', 'Puzzle', 'DeductionPuzzle', 'PlanningPuzzle', 'Equipment', 'Container', 'Board', 'PrismShape', 'ParallelogramShape', 'RectanglePyramidalShape', 'TargetShape', 'BrickTiling', 'CelticTiling', 'QuadHexTiling', 'Hints', 'PlayableSites', 'Component', 'DiceD3', 'BiasedDice', 'Card', 'Domino', 'Rules', 'SituationalTurnKo', 'SituationalSuperko', 'InitialAmount', 'InitialPot', 'Play', 'BetDecision', 'BetDecisionFrequency', 'VoteDecisionFrequency', 'ChooseTrumpSuitDecision', 'ChooseTrumpSuitDecisionFrequency', 'LeapDecisionToFriend', 'LeapDecisionToFriendFrequency', 'HopDecisionEnemyToFriend', 'HopDecisionEnemyToFriendFrequency', 'HopDecisionFriendToFriend', 'FromToDecisionWithinBoard', 'FromToDecisionBetweenContainers', 'BetEffect', 'BetEffectFrequency', 'VoteEffectFrequency', 'SwapPlayersEffectFrequency', 'TakeControl', 'TakeControlFrequency', 'PassEffectFrequency', 'SetCost', 'SetCostFrequency', 'SetPhase', 'SetPhaseFrequency', 'SetTrumpSuit', 'SetTrumpSuitFrequency', 'StepEffectFrequency', 'SlideEffectFrequency', 'LeapEffectFrequency', 'HopEffectFrequency', 'FromToEffectFrequency', 'SwapPiecesEffect', 'SwapPiecesEffectFrequency', 'ShootEffect', 'ShootEffectFrequency', 'MaxCapture', 'OffDiagonalDirection', 'Information', 'HidePieceType', 'HidePieceOwner', 'HidePieceCount', 'HidePieceRotation', 'HidePieceValue', 'HidePieceState', 'InvisiblePiece', 'End', 'LineDrawFrequency', 'ConnectionDraw', 'ConnectionDrawFrequency', 'GroupLossFrequency', 'GroupDrawFrequency', 'LoopLossFrequency', 'LoopDraw', 'LoopDrawFrequency', 'PatternLoss', 'PatternLossFrequency', 'PatternDraw', 'PatternDrawFrequency', 'PathExtentEndFrequency', 'PathExtentWinFrequency', 'PathExtentLossFrequency', 'PathExtentDraw', 'PathExtentDrawFrequency', 'TerritoryLoss', 'TerritoryLossFrequency', 'TerritoryDraw', 'TerritoryDrawFrequency', 'CheckmateLoss', 'CheckmateLossFrequency', 'CheckmateDraw', 'CheckmateDrawFrequency', 'NoTargetPieceLoss', 'NoTargetPieceLossFrequency', 'NoTargetPieceDraw', 'NoTargetPieceDrawFrequency', 'NoOwnPiecesDraw', 'NoOwnPiecesDrawFrequency', 'FillLoss', 'FillLossFrequency', 'FillDraw', 'FillDrawFrequency', 'ScoringDrawFrequency', 'NoProgressWin', 'NoProgressWinFrequency', 'NoProgressLoss', 'NoProgressLossFrequency', 'SolvedEnd', 'Behaviour', 'StateRepetition', 'PositionalRepetition', 'SituationalRepetition', 'Duration', 'Complexity', 'BoardCoverage', 'GameOutcome', 'StateEvaluation', 'Clarity', 'Narrowness', 'Variance', 'Decisiveness', 'DecisivenessMoves', 'DecisivenessThreshold', 'LeadChange', 'Stability', 'Drama', 'DramaAverage', 'DramaMedian', 'DramaMaximum', 'DramaMinimum', 'DramaVariance', 'DramaChangeAverage', 'DramaChangeSign', 'DramaChangeLineBestFit', 'DramaChangeNumTimes', 'DramaMaxIncrease', 'DramaMaxDecrease', 'MoveEvaluation', 'MoveEvaluationAverage', 'MoveEvaluationMedian', 'MoveEvaluationMaximum', 'MoveEvaluationMinimum', 'MoveEvaluationVariance', 'MoveEvaluationChangeAverage', 'MoveEvaluationChangeSign', 'MoveEvaluationChangeLineBestFit', 'MoveEvaluationChangeNumTimes', 'MoveEvaluationMaxIncrease', 'MoveEvaluationMaxDecrease', 'StateEvaluationDifference', 'StateEvaluationDifferenceAverage', 'StateEvaluationDifferenceMedian', 'StateEvaluationDifferenceMaximum', 'StateEvaluationDifferenceMinimum', 'StateEvaluationDifferenceVariance', 'StateEvaluationDifferenceChangeAverage', 'StateEvaluationDifferenceChangeSign', 'StateEvaluationDifferenceChangeLineBestFit', 'StateEvaluationDifferenceChangeNumTimes', 'StateEvaluationDifferenceMaxIncrease', 'StateEvaluationDifferenceMaxDecrease', 'BoardSitesOccupied', 'BoardSitesOccupiedMinimum', 'BranchingFactor', 'BranchingFactorMinimum', 'DecisionFactor', 'DecisionFactorMinimum', 'MoveDistance', 'MoveDistanceMinimum', 'PieceNumber', 'PieceNumberMinimum', 'ScoreDifference', 'ScoreDifferenceMinimum', 'ScoreDifferenceChangeNumTimes', 'Roots', 'Cosine', 'Sine', 'Tangent', 'Exponential', 'Logarithm', 'ExclusiveDisjunction', 'Float', 'HandComponent', 'SetHidden', 'SetInvisible', 'SetHiddenCount', 'SetHiddenRotation', 'SetHiddenState', 'SetHiddenValue', 'SetHiddenWhat', 'SetHiddenWho',
+          #in train.columns not in test.columns
+         'num_wins_agent1', 'num_draws_agent1', 'num_losses_agent1',
+         #object
+         'Behaviour', 'StateRepetition', 'Duration', 'Complexity', 'BoardCoverage', 'GameOutcome', 'StateEvaluation', 'Clarity', 'Decisiveness', 'Drama', 'MoveEvaluation', 'StateEvaluationDifference', 'BoardSitesOccupied', 'BranchingFactor', 'DecisionFactor', 'MoveDistance', 'PieceNumber', 'ScoreDifference','selection1', 'selection2', 'exploration_const1', 'exploration_const2', 'playout1', 'playout2', 'score_bounds1', 'score_bounds2',
+        ]+drop_cols,axis=1,inplace=True,errors='ignore') 
+        
+        df=self.reduce_mem_usage(df)
+        print(f"feature_count:{len(df.columns)}")
+        print("-"*30)
+        return df
 
-    # Remove all NaN/null numerical columns
-    all_nan_cols = df_train[numerical_cols].columns[df_train[numerical_cols].isna().all()]
-    numerical_cols = [col for col in numerical_cols if col not in all_nan_cols.tolist()]
-    print("number of all nan cols: ", len(all_nan_cols))
+    def CV_feats(self,df,mode='',model_name='',fold=0):
+        str_cols=['EnglishRules', 'LudRules']#'agent1','agent2',
+        for col in str_cols:
+            df=self.clean(df,col)
+            df[f'{col}_len']=df[col].apply(len)
+            if mode=='train':
+                tfidf = TfidfVectorizer(max_features=500,ngram_range=(2,3))
+                tfidf_feats=tfidf.fit_transform(df[col]).toarray()
+                for i in range(tfidf_feats.shape[1]):
+                    df[f"{col}_tfidf_{i}"]=tfidf_feats[:,i]
+                self.pickle_dump(tfidf,f'{model_name}_{fold}_{col}tfidf.model')
+                self.tfidf_paths.append((model_name,fold,col))
+            else:#mode=='test'
+                for i in range(len(self.tfidf_paths)):
+                    if (model_name,fold,col)==self.tfidf_paths[i]:
+                        tfidf=self.pickle_load(f'{model_name}_{fold}_{col}tfidf.model')
+                        tfidf_feats=tfidf.transform(df[col]).toarray()
+                        for j in range(tfidf_feats.shape[1]):
+                            df[f"{col}_tfidf_{j}"]=tfidf_feats[:,j]
+        df.drop(str_cols+['agent1','agent2'],axis=1,inplace=True)
+        return df 
+    
+    def RMSE(self,y_true,y_pred):
+        return np.sqrt(np.mean((y_true-y_pred)**2))
+    def train_model(self,):
+        self.train=self.FE(self.train,mode='train')
+        #https://www.kaggle.com/code/ravi20076/mcts2024-mlmodels-v1/notebook
+        cat_params1={'task_type'           : "GPU",
+               'eval_metric'         : "RMSE",
+               'bagging_temperature' : 0.50,
+               'iterations'          : 3096,
+               'learning_rate'       : 0.08,
+               'max_depth'           : 12,
+               'l2_leaf_reg'         : 1.25,
+               'min_data_in_leaf'    : 24,
+               'random_strength'     : 0.25, 
+               'verbose'             : 0,
+              }
+        
+        cat_params2={'task_type'           : "GPU",
+               'eval_metric'         : "RMSE",
+               'bagging_temperature' : 0.60,
+               'iterations'          : 3096,
+               'learning_rate'       : 0.08,
+               'max_depth'           : 12,
+               'l2_leaf_reg'         : 1.25,
+               'min_data_in_leaf'    : 24,
+               'random_strength'     : 0.20, 
+               'max_bin'             :2048,
+               'verbose'             : 0,
+              }
+        models=[
+                (CatBoostRegressor(**cat_params1),'cat1'),
+                (CatBoostRegressor(**cat_params2),'cat2'),
+               ]
+        
+        for (model,model_name) in models:
+            print("start training")
+            X=self.train.drop([self.target,'GameRulesetName'],axis=1)
+            GameRulesetName=self.train['GameRulesetName']
+            y=self.train[self.target]
+            oof_preds=np.zeros(len(X))
+            
+            y_int=round(y*15)
+            
+            sgkf = StratifiedGroupKFold(n_splits=self.num_folds,random_state=2024,shuffle=True)
 
-    # Remove constant columns
-    constant_cols = df_train[numerical_cols].columns[df_train[numerical_cols].std() == 0]
-    numerical_cols = [col for col in numerical_cols if col not in constant_cols]
-    print("number of constant cols: ", len(constant_cols))
+            for fold, (train_index, valid_index) in (enumerate(sgkf.split(X,y_int,GameRulesetName))):
+                print(f"fold:{fold}")
 
-    # Apply ordinal encoding to categorical columns
-    encoder = OrdinalEncoder()
-    df_train[categorical_cols] = encoder.fit_transform(df_train[categorical_cols])
-    df_train[categorical_cols] = df_train[categorical_cols].astype(int)
+                X_train, X_valid = X.iloc[train_index], X.iloc[valid_index]
+                y_train, y_valid = y.iloc[train_index], y.iloc[valid_index]
 
-    # Fit and transform the numerical columns of df_train
-    if scale:
-        scaler = StandardScaler()
-        df_train[numerical_cols] = scaler.fit_transform(df_train[numerical_cols])
-    else:
-        scaler = None
+                X_train=self.CV_feats(X_train,mode='train',model_name=model_name,fold=fold)
+                X_valid=self.CV_feats(X_valid,mode='test',model_name=model_name,fold=fold)
 
-    df_train[numerical_cols] = df_train[numerical_cols].astype(np.float32)
-    df_train[categorical_cols] = df_train[categorical_cols].astype(np.int32)
+                model.fit(X_train, y_train,
+                      eval_set=(X_valid, y_valid),
+                      early_stopping_rounds=100, verbose=100)
+                
+                oof_preds[valid_index]=model.predict(X_valid)
 
-    # for CV purposes
-    df_train["utility_agent1_rank"] = (
-        df_train["utility_agent1"].rank(method='dense', ascending=True).astype(int)
-    )
+                self.pickle_dump(model,f'{model_name}_{fold}.model')
+                self.model_paths.append((model_name,fold))
 
-    return df_train, numerical_cols, categorical_cols, encoder, scaler
-
-
-def process_test_data(
-    df_test: pd.DataFrame,
-    numerical_cols: list,
-    categorical_cols: list,
-    encoder: OrdinalEncoder,
-    scaler: StandardScaler = None
-):
-    df_test = split_agent_fields(df_test)
-
-    # Apply ordinal encoding to categorical columns
-    df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
-
-    # Fit and transform the numerical columns of df_test
-    if scaler is not None:
-        df_test[numerical_cols] = scaler.transform(df_test[numerical_cols])
-
-    df_test[numerical_cols] = df_test[numerical_cols].astype(np.float32)
-    df_test[categorical_cols] = df_test[categorical_cols].astype(np.int32)
-
-    return df_test
+                del X_train,X_valid,y_train,y_valid
+                gc.collect()
+            
+            np.save(f"{model_name}_oof.npy",np.clip(oof_preds*1.1,-0.985,0.985))
+            
+            print(f"RMSE:{self.RMSE(y.values,np.clip(oof_preds*1.1,-0.985,0.985) )}")
+            
+    def infer_model(self,test):
+        test=self.FE(test,mode='test')
+        test.drop(['GameRulesetName'],axis=1,inplace=True)
+        test_preds=[]
+        for i in range(len(self.model_paths)):
+            model_name,fold=self.model_paths[i]
+            test_copy=self.CV_feats(test.copy(),mode='test',model_name=model_name,fold=fold)
+            model=self.pickle_load(f'{model_name}_{fold}.model')
+            test_preds+=[np.clip(model.predict(test_copy)*1.1,-0.985,0.985)]
+        return np.mean(test_preds,axis=0)
