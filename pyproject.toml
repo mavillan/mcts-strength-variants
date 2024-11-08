@@ -31,7 +31,10 @@ seaborn = "^0.13.2"
 optuna = "^4.0.0"
 cloudpickle = "3.0.0"
 dill = "0.3.8"
-tensorflow-macos = "^2.16.2"
+deeptables = "^0.2.6"
+colorama = "^0.4.6"
+tensorflow-io-gcs-filesystem = {version = ">=0.23.1", markers = "python_version >= \"3.10\" and python_version < \"3.13\""}
+tensorflow-macos = "2.15.0"
 tensorflow-metal = "^1.1.0"
 
 
