@@ -11,6 +11,37 @@ def split_agent_fields(df):
     return df
 
 
+def feat_engineering(df):
+    df['area'] = df['NumRows'] * df['NumColumns']
+    df['row_equal_col'] = (df['NumColumns'] == df['NumRows']).astype(np.int8)
+    df['Playouts/Moves'] = df['PlayoutsPerSecond'] / (df['MovesPerSecond'] + 1e-15)
+    df['EfficiencyPerPlayout'] = df['MovesPerSecond'] / (df['PlayoutsPerSecond'] + 1e-15)
+    df['TurnsDurationEfficiency'] = df['DurationActions'] / (df['DurationTurnsStdDev'] + 1e-15)
+    df['AdvantageBalanceRatio'] = df['AdvantageP1'] / (df['Balance'] + 1e-15)
+    df['ActionTimeEfficiency'] = df['DurationActions'] / (df['MovesPerSecond'] + 1e-15)
+    df['StandardizedTurnsEfficiency'] = df['DurationTurnsStdDev'] / (df['DurationActions'] + 1e-15)
+    df['AdvantageTimeImpact'] = df['AdvantageP1'] / (df['DurationActions'] + 1e-15)
+    df['DurationToComplexityRatio'] = df['DurationActions'] / (df['StateTreeComplexity'] + 1e-15)
+    df['NormalizedGameTreeComplexity'] = df['GameTreeComplexity'] / (df['StateTreeComplexity'] + 1e-15)
+    df['ComplexityBalanceInteraction'] = df['Balance'] * df['GameTreeComplexity']
+    df['OverallComplexity'] = df['StateTreeComplexity'] + df['GameTreeComplexity']
+    df['ComplexityPerPlayout'] = df['GameTreeComplexity'] / (df['PlayoutsPerSecond'] + 1e-15)
+    df['TurnsNotTimeouts/Moves'] = df['DurationTurnsNotTimeouts'] / (df['MovesPerSecond'] + 1e-15)
+    df['Timeouts/DurationActions'] = df['Timeouts'] / (df['DurationActions'] + 1e-15)
+    df['OutcomeUniformity/AdvantageP1'] = df['OutcomeUniformity'] / (df['AdvantageP1'] + 1e-15)
+    df['ComplexDecisionRatio'] = df['StepDecisionToEnemy'] + df['SlideDecisionToEnemy'] + df['HopDecisionMoreThanOne']
+    df['AggressiveActionsRatio'] = df['StepDecisionToEnemy'] + df['HopDecisionEnemyToEnemy'] + df['HopDecisionFriendToEnemy'] + df['SlideDecisionToEnemy']
+    added_cols = [
+        'area', 'row_equal_col', 'Playouts/Moves', 'EfficiencyPerPlayout',
+        'TurnsDurationEfficiency', 'AdvantageBalanceRatio', 'ActionTimeEfficiency',
+        'StandardizedTurnsEfficiency', 'AdvantageTimeImpact', 'DurationToComplexityRatio',
+        'NormalizedGameTreeComplexity', 'ComplexityBalanceInteraction', 'OverallComplexity',
+        'ComplexityPerPlayout', 'TurnsNotTimeouts/Moves', 'Timeouts/DurationActions',
+        'OutcomeUniformity/AdvantageP1', 'ComplexDecisionRatio', 'AggressiveActionsRatio'
+    ]
+    return df, added_cols
+
+
 def process_train_data(
     df_train: pd.DataFrame,
     scale: bool = False,
@@ -18,6 +49,8 @@ def process_train_data(
     categorical_cols: list = None,
 ):
     df_train = split_agent_fields(df_train)
+    df_train, added_cols = feat_engineering(df_train)
+    numerical_cols = numerical_cols + added_cols
 
     # Identify numerical and categorical columns
     if numerical_cols is None:
@@ -59,6 +92,7 @@ def process_train_data(
     df_train[categorical_cols] = df_train[categorical_cols].astype(np.int32)
 
     # for CV purposes
+    df_train = df_train.copy()
     df_train["utility_agent1_rank"] = (
         df_train["utility_agent1"].rank(method='dense', ascending=True).astype(int)
     )
@@ -74,6 +108,7 @@ def process_test_data(
     scaler: StandardScaler = None
 ):
     df_test = split_agent_fields(df_test)
+    df_test = feat_engineering(df_test)
 
     # Apply ordinal encoding to categorical columns
     df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
