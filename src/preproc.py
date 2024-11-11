@@ -49,8 +49,6 @@ def process_train_data(
     categorical_cols: list = None,
 ):
     df_train = split_agent_fields(df_train)
-    df_train, added_cols = feat_engineering(df_train)
-    numerical_cols = numerical_cols + added_cols
 
     # Identify numerical and categorical columns
     if numerical_cols is None:
