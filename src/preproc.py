@@ -43,8 +43,6 @@ def feat_engineering(df):
 
 
 def agent_position_feature(df):
-    print("agent position feature")
-    # agent is positive or negative
     all_agents = [
         'MCTS-ProgressiveHistory-0.1-MAST-false', 'MCTS-ProgressiveHistory-0.1-MAST-true', 
         'MCTS-ProgressiveHistory-0.1-NST-false', 'MCTS-ProgressiveHistory-0.1-NST-true',
@@ -118,6 +116,9 @@ def process_train_data(
             if col not in ['GameRulesetName','EnglishRules', 'LudRules']
         ]
 
+    df_train, added_cols = agent_position_feature(df_train)
+    numerical_cols = numerical_cols + added_cols
+
     # Remove all NaN/null numerical columns
     all_nan_cols = df_train[numerical_cols].columns[df_train[numerical_cols].isna().all()]
     numerical_cols = [col for col in numerical_cols if col not in all_nan_cols.tolist()]
@@ -160,7 +161,7 @@ def process_test_data(
     scaler: StandardScaler = None
 ):
     df_test = split_agent_fields(df_test)
-    # df_test = feat_engineering(df_test)
+    df_test,_ = agent_position_feature(df_test)
 
     # Apply ordinal encoding to categorical columns
     df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
