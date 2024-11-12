@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
+import re
 
 
 def split_agent_fields(df):
@@ -94,6 +95,54 @@ def agent_position_feature(df):
     return df, added_cols
 
 
+def clean(df, col):
+    df[col] = df[col].fillna("nan")
+    
+    def clean_text(text):
+        # Convert to lowercase
+        text = text.lower()
+        # Replace multiple spaces with single space
+        text = ' '.join(text.split())        
+        # Replace remaining punctuation with spaces
+        text = re.sub(r'[^\w\s_]', ' ', text)
+        # Remove numeric values that appear alone (but keep them if part of a token)
+        text = re.sub(r'\b\d+\b', '', text)
+        # Final cleanup of multiple spaces
+        text = ' '.join(text.split())
+        return text
+    
+    df[col] = df[col].apply(clean_text)
+    return df
+
+
+def remove_game_name(rule):
+    """
+    Remove only the game name from the rule string.
+    Input:  '(game "Kaua Dorki" (players 2) ...'
+    Output: '(game (players 2) ...'
+    """
+    try:
+        # Find the position of first and second quote
+        first_quote = rule.find('"')
+        second_quote = rule.find('"', first_quote + 1)
+        
+        # Remove everything between quotes (including quotes)
+        return rule[:first_quote - 1] + rule[second_quote + 2:]
+    except (IndexError, AttributeError):
+        return rule
+    
+
+def preproc_text_features(df):
+    df['LudRules'] = df['LudRules'].apply(remove_game_name)
+    df = clean(df, 'LudRules')
+    df = clean(df, 'EnglishRules')
+
+    df['LudRules_len'] = df['LudRules'].apply(len)
+    df['EnglishRules_len'] = df['EnglishRules'].apply(len)
+    added_cols = ['LudRules_len', 'EnglishRules_len']
+    return df, added_cols
+    
+
 def process_train_data(
     df_train: pd.DataFrame,
     scale: bool = False,
@@ -117,6 +166,9 @@ def process_train_data(
         ]
 
     df_train, added_cols = agent_position_feature(df_train)
+    numerical_cols = numerical_cols + added_cols
+
+    df_train, added_cols = preproc_text_features(df_train)
     numerical_cols = numerical_cols + added_cols
 
     # Remove all NaN/null numerical columns
