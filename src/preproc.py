@@ -214,6 +214,7 @@ def process_test_data(
 ):
     df_test = split_agent_fields(df_test)
     df_test,_ = agent_position_feature(df_test)
+    df_test,_ = preproc_text_features(df_test)
 
     # Apply ordinal encoding to categorical columns
     df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
