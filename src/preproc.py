@@ -148,6 +148,8 @@ def process_train_data(
     scale: bool = False,
     numerical_cols: list = None,
     categorical_cols: list = None,
+    include_position_features: bool = True,
+    include_text_features: bool = True,
 ):
     df_train = split_agent_fields(df_train)
 
@@ -165,11 +167,13 @@ def process_train_data(
             if col not in ['GameRulesetName','EnglishRules', 'LudRules']
         ]
 
-    df_train, added_cols = agent_position_feature(df_train)
-    numerical_cols = numerical_cols + added_cols
+    if include_position_features:
+        df_train, added_cols = agent_position_feature(df_train)
+        numerical_cols = numerical_cols + added_cols
 
-    df_train, added_cols = preproc_text_features(df_train)
-    numerical_cols = numerical_cols + added_cols
+    if include_text_features:
+        df_train, added_cols = preproc_text_features(df_train)
+        numerical_cols = numerical_cols + added_cols
 
     # Remove all NaN/null numerical columns
     all_nan_cols = df_train[numerical_cols].columns[df_train[numerical_cols].isna().all()]
@@ -210,11 +214,15 @@ def process_test_data(
     numerical_cols: list,
     categorical_cols: list,
     encoder: OrdinalEncoder,
-    scaler: StandardScaler = None
+    scaler: StandardScaler = None,
+    include_position_features: bool = True,
+    include_text_features: bool = True,
 ):
     df_test = split_agent_fields(df_test)
-    df_test,_ = agent_position_feature(df_test)
-    df_test,_ = preproc_text_features(df_test)
+    if include_position_features:
+        df_test,_ = agent_position_feature(df_test)
+    if include_text_features:
+        df_test,_ = preproc_text_features(df_test)
 
     # Apply ordinal encoding to categorical columns
     df_test[categorical_cols] = encoder.transform(df_test[categorical_cols])
