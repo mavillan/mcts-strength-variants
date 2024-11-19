@@ -38,6 +38,8 @@ tensorflow-metal = "^1.1.0"
 deeptables = "^0.2.6"
 dask = {extras = ["dataframe"], version = "^2024.11.2"}
 scikit-learn = "1.2.2"
+dvc = "^3.56.0"
+dvc-ssh = "^4.1.1"
 
 
 [build-system]
