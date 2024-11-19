@@ -139,3 +139,4 @@ deeptables-0.2.6/
 *.DS_STORE
 data/
 .pt_tmp/
+saved_models/
