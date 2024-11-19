@@ -131,3 +131,11 @@ dmypy.json
 **/catboost_info/
 
 secrets
+*.pkl
+*.xlsx
+lightning_logs/
+*.parquet
+deeptables-0.2.6/
+*.DS_STORE
+data/
+.pt_tmp/
