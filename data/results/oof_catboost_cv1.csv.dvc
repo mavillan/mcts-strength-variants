@@ -1,0 +1,5 @@
+outs:
+- md5: 24b15f143b30af81cafa9aa08d25d8b3
+  size: 7262269
+  hash: md5
+  path: oof_catboost_cv1.csv

@@ -137,6 +137,6 @@ lightning_logs/
 *.parquet
 deeptables-0.2.6/
 *.DS_STORE
-data/
+# data/
 .pt_tmp/
 saved_models/

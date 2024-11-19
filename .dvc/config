@@ -1,0 +1,6 @@
+[core]
+    remote = sshremote
+    autostage = true
+['remote "sshremote"']
+    url = ssh://mavillan@studio.local:2222/Users/mavillan/dvc
+    ask_passphrase = true
