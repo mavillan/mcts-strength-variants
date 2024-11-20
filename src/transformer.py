@@ -77,7 +77,7 @@ class XGBLeavesEncoder(BaseEstimator, TransformerMixin):
         X[self.num_cols] = X[self.num_cols].astype('float')
         X[self.cat_cols] = X[self.cat_cols].astype('int')
 
-        leaves = self.xgb.predict(X, pred_leaf=True)
+        leaves = self.xgb.apply(X)
         new_columns = [f'xgb_leaf_{i}' for i in range(leaves.shape[1])]
         if verbose:
             print(f'Adding {len(new_columns)} new columns from XGB leaves')
