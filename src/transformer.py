@@ -44,9 +44,8 @@ class LGBMLeavesEncoder(BaseEstimator, TransformerMixin):
         if verbose:
             print(f'Adding {len(new_columns)} new columns from LGBM leaves')
         df_leaves = pd.DataFrame(leaves, columns=new_columns, index=X.index)
-        result = pd.concat([X, df_leaves], axis=1)
         self.new_columns = new_columns
-        return result
+        return df_leaves
 
 class XGBLeavesEncoder(BaseEstimator, TransformerMixin):
     def __init__(self, num_cols ,cat_cols, task, **params):
@@ -82,9 +81,8 @@ class XGBLeavesEncoder(BaseEstimator, TransformerMixin):
         if verbose:
             print(f'Adding {len(new_columns)} new columns from XGB leaves')
         df_leaves = pd.DataFrame(leaves, columns=new_columns, index=X.index)
-        result = pd.concat([X, df_leaves], axis=1)
         self.new_columns = new_columns
-        return result
+        return df_leaves
 
 class CATBLeavesEncoder(BaseEstimator, TransformerMixin):
     def __init__(self, num_cols ,cat_cols, task, **params):
@@ -120,6 +118,5 @@ class CATBLeavesEncoder(BaseEstimator, TransformerMixin):
         if verbose:
             print(f'Adding {len(new_columns)} new columns from CATB leaves')
         df_leaves = pd.DataFrame(leaves, columns=new_columns, index=X.index)
-        result = pd.concat([X, df_leaves], axis=1)
         self.new_columns = new_columns
-        return result
+        return df_leaves
