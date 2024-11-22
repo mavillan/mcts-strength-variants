@@ -4830,6 +4830,30 @@ text-unidecode = ">=1.3"
 unidecode = ["Unidecode (>=1.1.1)"]
 
 [[package]]
+name = "pytorch-frame"
+version = "0.2.3"
+description = "Tabular Deep Learning Library for PyTorch"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "pytorch_frame-0.2.3-py3-none-any.whl", hash = "sha256:ef0d41a92bc5a090a6dd562a4f948406ad4f9656bde1c7262c6fad29f6e5521a"},
+    {file = "pytorch_frame-0.2.3.tar.gz", hash = "sha256:33907a25641932751019f696262e3bf3a44e7679aabfc43e55f7243c6aa85c23"},
+]
+
+[package.dependencies]
+numpy = "*"
+pandas = "*"
+Pillow = "*"
+pyarrow = "*"
+torch = "*"
+tqdm = "*"
+
+[package.extras]
+dev = ["pre-commit", "pytorch_frame[test]"]
+full = ["catboost", "datasets", "lightgbm", "mpmath (==1.3.0)", "optuna (>=3.0.0)", "optuna-integration", "scikit-learn", "torchmetrics", "xgboost (>=1.7.0,<2.0.0)"]
+test = ["mypy", "pytest", "pytest-cov"]
+
+[[package]]
 name = "pytorch-lightning"
 version = "2.1.4"
 description = "PyTorch Lightning is the lightweight PyTorch wrapper for ML researchers. Scale your models. Write less boilerplate."
@@ -6298,6 +6322,17 @@ opt-einsum = ["opt-einsum (>=3.3)"]
 optree = ["optree (>=0.11.0)"]
 
 [[package]]
+name = "torchinfo"
+version = "1.8.0"
+description = "Model summary in PyTorch, based off of the original torchsummary."
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "torchinfo-1.8.0-py3-none-any.whl", hash = "sha256:2e911c2918603f945c26ff21a3a838d12709223dc4ccf243407bce8b6e897b46"},
+    {file = "torchinfo-1.8.0.tar.gz", hash = "sha256:72e94b0e9a3e64dc583a8e5b7940b8938a1ac0f033f795457f27e6f4e7afa2e9"},
+]
+
+[[package]]
 name = "torchmetrics"
 version = "1.2.1"
 description = "PyTorch native Metrics"
@@ -6813,4 +6848,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "c7228cb6d024177570bef7ecb5321cab9012117d7454d16c8415b54592e85969"
+content-hash = "346b382612f803a60e16e897adbf70837b7f208c0425cb8e60ee1e3eacea5a58"
