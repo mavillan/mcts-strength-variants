@@ -1,5 +1,0 @@
-outs:
-- md5: 8057d12ede36e481f36b1a03c9dfc29b
-  size: 56965
-  hash: md5
-  path: feat_importance_lightgbm_cv1.csv

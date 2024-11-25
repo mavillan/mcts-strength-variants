@@ -1,5 +1,0 @@
-outs:
-- md5: 0368fce9691a5d65cb2cdd28add9818f
-  size: 59290
-  hash: md5
-  path: feat_importance_catboost_cv1.csv
