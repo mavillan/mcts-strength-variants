@@ -9,20 +9,31 @@ def remove_output_cells(notebook_path:str) -> None:
     output, _ = process.communicate()
     print(output)
     
-def run_notebook(notebook_path:str, overwrite:bool = True) -> None:
+def run_notebook(notebook_path: str, fs_type: str = None, overwrite: bool = False) -> None:
     notebook_path = Path(notebook_path)
     workdir = notebook_path.parent
     if not overwrite:
         output_path = notebook_path.parent / "outputs"
         output_path.mkdir(parents=True, exist_ok=True)
-        output_path = output_path / notebook_path.name
+        if fs_type:
+            # Add fs_type as suffix before the extension
+            stem = notebook_path.stem + f"_{fs_type}"
+            output_path = output_path / f"{stem}{notebook_path.suffix}"
+        else:
+            output_path = output_path / notebook_path.name
     else:
-        output_path = notebook_path
+        if fs_type:
+            # Add fs_type as suffix before the extension
+            stem = notebook_path.stem + f"_{fs_type}"
+            output_path = notebook_path.parent / f"{stem}{notebook_path.suffix}"
+        else:
+            output_path = notebook_path
 
     remove_output_cells(str(notebook_path))
     pm.execute_notebook(
         input_path=str(notebook_path), 
         output_path=str(output_path),
+        parameters={"fs_type": fs_type},
         cwd=str(workdir),
     )
 
