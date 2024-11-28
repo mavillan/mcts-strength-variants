@@ -1,6 +1,12 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import OrdinalEncoder, StandardScaler, MinMaxScaler
+from sklearn.preprocessing import (
+    OrdinalEncoder, 
+    StandardScaler, 
+    MinMaxScaler, 
+    RobustScaler, 
+    QuantileTransformer
+)
 import re
 from typing import Union
 
@@ -198,6 +204,17 @@ def process_train_data(
             scaler = StandardScaler()
         elif scale_type == 'minmax':
             scaler = MinMaxScaler()
+        elif scale_type == 'robust':
+            scaler = RobustScaler(
+                quantile_range=(0.2, 0.8),
+                unit_variance=True
+            )
+        elif scale_type == 'quantile':
+            scaler = QuantileTransformer(
+                output_distribution='normal',
+                subsample=None,
+                random_state=2112,
+            )
         df_train[numerical_cols] = scaler.fit_transform(df_train[numerical_cols])
     else:
         scaler = None
@@ -219,7 +236,13 @@ def process_test_data(
     numerical_cols: list,
     categorical_cols: list,
     encoder: OrdinalEncoder,
-    scaler: Union[StandardScaler, MinMaxScaler, None] = None,
+    scaler: Union[
+        StandardScaler,
+        MinMaxScaler,
+        RobustScaler,
+        QuantileTransformer,
+        None
+    ] = None,
     include_position_features: bool = True,
     include_text_features: bool = True,
 ):
