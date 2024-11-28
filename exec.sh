@@ -14,7 +14,9 @@
 # python run.py train/nn-mlp.ipynb --fs-type uni80
 # python run.py train/nn-mlp.ipynb --fs-type uni85
 # python run.py train/nn-mlp.ipynb --fs-type uni90
-python run.py train/nn-mlp.ipynb --fs-type uni95
+# python run.py train/nn-mlp.ipynb --fs-type uni95
+
+python run.py train/nn-1dcnn.ipynb --fs-type uni95
 
 # python run.py train/lightgbm.ipynb --fs-type full
 # python run.py train/lightgbm.ipynb --fs-type fsv2
