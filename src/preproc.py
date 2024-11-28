@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import OrdinalEncoder, StandardScaler
+from sklearn.preprocessing import OrdinalEncoder, StandardScaler, MinMaxScaler
 import re
+from typing import Union
 
 
 def split_agent_fields(df):
@@ -146,6 +147,7 @@ def preproc_text_features(df):
 def process_train_data(
     df_train: pd.DataFrame,
     scale: bool = False,
+    scale_type: str = 'standard',
     numerical_cols: list = None,
     categorical_cols: list = None,
     include_position_features: bool = True,
@@ -192,7 +194,10 @@ def process_train_data(
 
     # Fit and transform the numerical columns of df_train
     if scale:
-        scaler = StandardScaler()
+        if scale_type == 'standard':
+            scaler = StandardScaler()
+        elif scale_type == 'minmax':
+            scaler = MinMaxScaler()
         df_train[numerical_cols] = scaler.fit_transform(df_train[numerical_cols])
     else:
         scaler = None
@@ -214,7 +219,7 @@ def process_test_data(
     numerical_cols: list,
     categorical_cols: list,
     encoder: OrdinalEncoder,
-    scaler: StandardScaler = None,
+    scaler: Union[StandardScaler, MinMaxScaler, None] = None,
     include_position_features: bool = True,
     include_text_features: bool = True,
 ):
