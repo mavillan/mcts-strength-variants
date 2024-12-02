@@ -245,7 +245,13 @@ def process_test_data(
     ] = None,
     include_position_features: bool = True,
     include_text_features: bool = True,
+    imputer = None,
 ):
+    # Apply imputation to numerical columns if imputer is provided
+    if imputer is not None:
+        imputer_cols = imputer.feature_names_in_.tolist()
+        df_test[imputer_cols] = imputer.transform(df_test[imputer_cols])
+
     df_test = split_agent_fields(df_test)
     if include_position_features:
         df_test,_ = agent_position_feature(df_test)
